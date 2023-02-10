@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "barcode-detector"
+version = "0.1.0"
+description = "Barcode detection for the shelfy application"
+authors = ["Aynes"]
+readme = "README.md"
+packages = [{include = "barcode_detector"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+opencv-python = "^4.7.0.68"
+pdf2image = "^1.16.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
