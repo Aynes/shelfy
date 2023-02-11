@@ -10,6 +10,8 @@ packages = [{include = "barcode_detector"}]
 python = "^3.11"
 opencv-python = "^4.7.0.68"
 pdf2image = "^1.16.2"
+imutils = "^0.5.4"
+pytesseract = "^0.3.10"
 
 
 [build-system]
