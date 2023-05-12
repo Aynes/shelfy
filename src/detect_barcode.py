@@ -4,9 +4,14 @@ import cv2
 import pytesseract
 import re
 from pathlib import Path
+from pyzbar import pyzbar
+import pandas as pd
+from tqdm import tqdm
+from loguru import logger
 
 PATH = "data/jpg/230208190315_0.jpg"
 PADDING = 0.05
+
 
 def step_1(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -19,9 +24,9 @@ def step_1(image):
 
     (_, thresh) = cv2.threshold(blurred, 225, 255, cv2.THRESH_BINARY)
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (90, 90))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (50, 2000))
     closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-    
+
     closed = cv2.erode(closed, None, iterations = 10)
     closed = cv2.dilate(closed, None, iterations = 10)
     return closed
@@ -32,27 +37,25 @@ def get_counturs(image):
     cnts = imutils.grab_contours(cnts)
     return cnts
 
-def get_crop(c, image):
+def get_crop(c, image, padding=PADDING):
     max_h, max_w, _ = image.shape
-    # print(image.shape)
     rect = cv2.minAreaRect(c)
     box = cv2.cv.BoxPoints(rect) if imutils.is_cv2() else cv2.boxPoints(rect)
     box = np.int0(box)
 
     x1, x2, x3, x4 = box
 
-    xmin = min(x1[0], x2[0],x3[0], x4[0]) 
-    xmax = max(x1[0], x2[0],x3[0], x4[0]) 
+    xmin = min(x1[0], x2[0],x3[0], x4[0])
+    xmax = max(x1[0], x2[0],x3[0], x4[0])
 
     ymin = min(x1[1], x2[1],x3[1], x4[1])
     ymax = max(x1[1], x2[1],x3[1], x4[1])
 
-    xmin = max(0, round(xmin - PADDING*(xmax-xmin)))
-    xmax = min(max_w, round(xmax + PADDING*(xmax-xmin)))
+    xmin = max(0, round(xmin - padding*(xmax-xmin)))
+    xmax = min(max_w, round(xmax + padding*(xmax-xmin)))
 
-    ymin = max(0, ymin - round(PADDING*(ymax-ymin)))
-    ymax = min(max_h, ymax + round(PADDING*(ymax-ymin)))
-
+    ymin = max(0, ymin - round(padding*(ymax-ymin)))
+    ymax = min(max_h, ymax + round(padding*(ymax-ymin)))
 
     crop = image[ymin: ymax, xmin:xmax] #TODO: разобраться с координатами и делать нормальный кроп
     return crop
@@ -69,10 +72,10 @@ def step_2(image):
 
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1000, 20))
     closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-    
+
     closed = cv2.erode(closed, None, iterations = 4)
     closed = cv2.dilate(closed, None, iterations = 4)
-    cv2.imwrite(f'c.png',closed,)
+    # cv2.imwrite(f'c.png',closed,)
     return closed
 
 def step_3(image):
@@ -83,47 +86,70 @@ def step_3(image):
     gradient = cv2.subtract(gradX, gradY)
     gradient = cv2.convertScaleAbs(gradient)
     blurred = cv2.blur(gradient, (1, 500))
-    # blurred = cv2.blur(blurred, (20, 20))
-    cv2.imwrite(f'last.png',blurred,)
+    # cv2.imwrite(f'last.png',blurred,)
     (_, thresh) = cv2.threshold(blurred, 225, 255, cv2.THRESH_BINARY)
 
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (100, 1))
     closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-    
+
     closed = cv2.erode(closed, None, iterations = 4)
     closed = cv2.dilate(closed, None, iterations = 4)
-    cv2.imwrite(f'last.png',closed,)
-    return closed 
+    # cv2.imwrite(f'last.png',closed,)
+    return closed
 
-def run(path):
-    image = cv2.imread(path)
+def recognize_page(path_to_image, path_to_csv):
+    logger.info(f'Current image: {path_to_image}')
+    image = cv2.imread(path_to_image)
+
+
     closed = step_1(image)
+
     column_conturs = get_counturs(closed)
-    
-    for i, conutur_culumn in enumerate(column_conturs):
+    table_data = []
+    for i, conutur_culumn in tqdm(enumerate(column_conturs)):
+
         crop_column = get_crop(conutur_culumn, image)
+        cv2.imwrite(f'column.png',crop_column ,)
         closed = step_2(crop_column)
         barcode_conturs = get_counturs(closed)
-        for j, contur_barcode in enumerate(barcode_conturs):
+        for j, contur_barcode in tqdm(enumerate(barcode_conturs)):
             crop_barcode = get_crop(contur_barcode, crop_column)
 
-            cv2.imwrite(f'{i}_{j}.png', crop_barcode)
-            text = pytesseract.image_to_string(crop_barcode).split('\n')[0]
+            (_, crop_barcode) = cv2.threshold(crop_barcode, 225, 255, cv2.THRESH_BINARY)
+
+            cv2.imwrite(f'tmp.png',crop_barcode,)
+
+            text = pytesseract.image_to_string(crop_barcode, config="-c tessedit_char_whitelist=0123456789ToOоО --psm 6 ").split('\n')[0]
             text = re.sub('[^A-Za-z0-9]+', '', text)
-            print(f'{i} {j} - {text}')
-            closed = step_3(crop_barcode)
-            barcode_only_cntr = get_counturs(closed)
-            for k, barcode_only in enumerate(barcode_only_cntr):
-                
-                barcode_only_crop = get_crop(barcode_only, crop_barcode)
-                cv2.imwrite(f'{i}_{j}_{text}.png',barcode_only_crop,)
+            if text.startswith('7'):
+                text = 'T' + text[1:]
+            if text.startswith('4'):
+                text = '1' + text[1:]
+            text = text.replace('O', '0')
+            text = text.replace('o', '0')
+            text = text.replace('О', '0')
+            text = text.replace('о', '0')
 
+            if text.startswith('1') or text.startswith('T'):
+                pass
+            else:
+                cv2.imwrite(f'errors/{Path(path_to_image).stem}_{i}_{j}.png',crop_barcode,)
+                continue
 
-            # rect = cv2.minAreaRect(contur_barcode)
-            # box = cv2.cv.BoxPoints(rect) if imutils.is_cv2() else cv2.boxPoints(rect)
-            # box = np.int0(box)
+            if len(text) < 4:
+                cv2.imwrite(f'errors/{Path(path_to_image).stem}_{i}_{j}.png',crop_barcode,)
+                continue
+            # closed = step_3(crop_barcode)
+            # barcode_only_cntr = get_counturs(closed)
 
-        #     cv2.drawContours(crop_column, [box], -1, (0, 255, 0), 3)
-        # cv2.imwrite(f'{i}_{j}.png',crop_column,)
+            decoded_objects = pyzbar.decode(crop_barcode)
+            if len(decoded_objects) == 1:
+                line = {'text': text, 'barcode': int(decoded_objects[0].data)}
+                table_data.append(line)
+            else:
+                cv2.imwrite(f'errors/{Path(path_to_image).stem}_{i}_{j}.png',crop_barcode,)
+    df = pd.DataFrame.from_dict(table_data)
+    df.to_csv(path_to_csv)
+
 if __name__ == "__main__":
-    run(PATH)
+    recognize_page(PATH, 'result.csv')
